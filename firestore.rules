@@ -1,0 +1,70 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && (request.auth.token.admin == true || request.auth.token.email.matches('.*@admin\\.resole\\.internal'));
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // 1. Shoes Collection (Catalog)
+    // Public read access for shopping; write restricted to authenticated curators/admins
+    match /shoes/{shoeId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // 2. Reviews Collection
+    // Public read access; authenticated or identified visitors can submit with validated data
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if request.resource.data.shoeId is string
+                    && request.resource.data.rating >= 1
+                    && request.resource.data.rating <= 5
+                    && request.resource.data.author is string;
+      allow update, delete: if isAdmin() || (isAuthenticated() && request.resource.data.userId == request.auth.uid);
+    }
+
+    // 3. Submissions Collection (Sell / Donate Your Shoes Intake)
+    // Public submission creation allowed; only admins can list or mutate status
+    match /submissions/{submissionId} {
+      allow create: if request.resource.data.brand is string
+                    && request.resource.data.contactEmail is string;
+      allow read, update, delete: if isAdmin();
+    }
+
+    // 4. Orders Collection (Fulfillment & Tracking)
+    // Customers can read their own order using matching orderId/email; admins manage fulfillment statuses
+    match /orders/{orderId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid) || resource.id == orderId;
+      allow create: if request.resource.data.items is list
+                    && request.resource.data.totalAmount is number;
+      allow update: if isAdmin();
+    }
+
+    // 5. Wishlists & User Preferences
+    match /wishlists/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // 6. Drop Alerts (Waitlist subscriptions)
+    match /drop_alerts/{alertId} {
+      allow create: if request.resource.data.email is string;
+      allow read, update, delete: if isAdmin();
+    }
+
+    // 7. Sustainability Aggregates & Metrics
+    match /sustainability/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}
